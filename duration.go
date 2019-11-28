@@ -1,100 +1,86 @@
-// Go support for Protocol Buffers - Google's data interchange format
-//
-// Copyright 2016 The Go Authors.  All rights reserved.
-// https://github.com/golang/protobuf
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-package proto
-
-// This file implements conversions between google.protobuf.Duration
-// and time.Duration.
+package pflag
 
 import (
-	"errors"
-	"fmt"
 	"time"
 )
 
-const (
-	// Range of a Duration in seconds, as specified in
-	// google/protobuf/duration.proto. This is about 10,000 years in seconds.
-	maxSeconds = int64(10000 * 365.25 * 24 * 60 * 60)
-	minSeconds = -maxSeconds
-)
+// -- time.Duration Value
+type durationValue time.Duration
 
-// validateDuration determines whether the Duration is valid according to the
-// definition in google/protobuf/duration.proto. A valid Duration
-// may still be too large to fit into a time.Duration (the range of Duration
-// is about 10,000 years, and the range of time.Duration is about 290).
-func validateDuration(d *duration) error {
-	if d == nil {
-		return errors.New("duration: nil Duration")
-	}
-	if d.Seconds < minSeconds || d.Seconds > maxSeconds {
-		return fmt.Errorf("duration: %#v: seconds out of range", d)
-	}
-	if d.Nanos <= -1e9 || d.Nanos >= 1e9 {
-		return fmt.Errorf("duration: %#v: nanos out of range", d)
-	}
-	// Seconds and Nanos must have the same sign, unless d.Nanos is zero.
-	if (d.Seconds < 0 && d.Nanos > 0) || (d.Seconds > 0 && d.Nanos < 0) {
-		return fmt.Errorf("duration: %#v: seconds and nanos have different signs", d)
-	}
-	return nil
+func newDurationValue(val time.Duration, p *time.Duration) *durationValue {
+	*p = val
+	return (*durationValue)(p)
 }
 
-// DurationFromProto converts a Duration to a time.Duration. DurationFromProto
-// returns an error if the Duration is invalid or is too large to be
-// represented in a time.Duration.
-func durationFromProto(p *duration) (time.Duration, error) {
-	if err := validateDuration(p); err != nil {
+func (d *durationValue) Set(s string) error {
+	v, err := time.ParseDuration(s)
+	*d = durationValue(v)
+	return err
+}
+
+func (d *durationValue) Type() string {
+	return "duration"
+}
+
+func (d *durationValue) String() string { return (*time.Duration)(d).String() }
+
+func durationConv(sval string) (interface{}, error) {
+	return time.ParseDuration(sval)
+}
+
+// GetDuration return the duration value of a flag with the given name
+func (f *FlagSet) GetDuration(name string) (time.Duration, error) {
+	val, err := f.getFlagType(name, "duration", durationConv)
+	if err != nil {
 		return 0, err
 	}
-	d := time.Duration(p.Seconds) * time.Second
-	if int64(d/time.Second) != p.Seconds {
-		return 0, fmt.Errorf("duration: %#v is out of range for time.Duration", p)
-	}
-	if p.Nanos != 0 {
-		d += time.Duration(p.Nanos)
-		if (d < 0) != (p.Nanos < 0) {
-			return 0, fmt.Errorf("duration: %#v is out of range for time.Duration", p)
-		}
-	}
-	return d, nil
+	return val.(time.Duration), nil
 }
 
-// DurationProto converts a time.Duration to a Duration.
-func durationProto(d time.Duration) *duration {
-	nanos := d.Nanoseconds()
-	secs := nanos / 1e9
-	nanos -= secs * 1e9
-	return &duration{
-		Seconds: secs,
-		Nanos:   int32(nanos),
-	}
+// DurationVar defines a time.Duration flag with specified name, default value, and usage string.
+// The argument p points to a time.Duration variable in which to store the value of the flag.
+func (f *FlagSet) DurationVar(p *time.Duration, name string, value time.Duration, usage string) {
+	f.VarP(newDurationValue(value, p), name, "", usage)
+}
+
+// DurationVarP is like DurationVar, but accepts a shorthand letter that can be used after a single dash.
+func (f *FlagSet) DurationVarP(p *time.Duration, name, shorthand string, value time.Duration, usage string) {
+	f.VarP(newDurationValue(value, p), name, shorthand, usage)
+}
+
+// DurationVar defines a time.Duration flag with specified name, default value, and usage string.
+// The argument p points to a time.Duration variable in which to store the value of the flag.
+func DurationVar(p *time.Duration, name string, value time.Duration, usage string) {
+	CommandLine.VarP(newDurationValue(value, p), name, "", usage)
+}
+
+// DurationVarP is like DurationVar, but accepts a shorthand letter that can be used after a single dash.
+func DurationVarP(p *time.Duration, name, shorthand string, value time.Duration, usage string) {
+	CommandLine.VarP(newDurationValue(value, p), name, shorthand, usage)
+}
+
+// Duration defines a time.Duration flag with specified name, default value, and usage string.
+// The return value is the address of a time.Duration variable that stores the value of the flag.
+func (f *FlagSet) Duration(name string, value time.Duration, usage string) *time.Duration {
+	p := new(time.Duration)
+	f.DurationVarP(p, name, "", value, usage)
+	return p
+}
+
+// DurationP is like Duration, but accepts a shorthand letter that can be used after a single dash.
+func (f *FlagSet) DurationP(name, shorthand string, value time.Duration, usage string) *time.Duration {
+	p := new(time.Duration)
+	f.DurationVarP(p, name, shorthand, value, usage)
+	return p
+}
+
+// Duration defines a time.Duration flag with specified name, default value, and usage string.
+// The return value is the address of a time.Duration variable that stores the value of the flag.
+func Duration(name string, value time.Duration, usage string) *time.Duration {
+	return CommandLine.DurationP(name, "", value, usage)
+}
+
+// DurationP is like Duration, but accepts a shorthand letter that can be used after a single dash.
+func DurationP(name, shorthand string, value time.Duration, usage string) *time.Duration {
+	return CommandLine.DurationP(name, shorthand, value, usage)
 }

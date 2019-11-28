@@ -1,82 +1,67 @@
-## Contributing
+# How to contribute #
 
-### Guidelines
+We'd love to accept your patches and contributions to this project.  There are
+a just a few small guidelines you need to follow.
 
-Here are a few guidelines for contributing:
 
-* If you would like to contribute to the codebase then please raise an issue to propose the change or feature
-* Do not work on an issue / PR until it gets a `design/approved` label from a maintainer
-* Do not mix feature changes or fixes with refactoring - it makes the code harder to review and means there is more for the maintainers (with limited time) to test
+## Contributor License Agreement ##
 
-* If you have found a bug please raise an issue and fill out the whole template.
-* Don't raise PRs for typos, these aren't necessary - just raise an Issue
-* If the documentation can be improved / translated etc please raise an issue to discuss. 
+Contributions to any Google project must be accompanied by a Contributor
+License Agreement.  This is not a copyright **assignment**, it simply gives
+Google permission to use and redistribute your contributions as part of the
+project.
 
-* Please always provide a summary of what you changed, how you did it and how it can be tested.
+  * If you are an individual writing original source code and you're sure you
+    own the intellectual property, then you'll need to sign an [individual
+    CLA][].
 
-### Compliance
+  * If you work for a company that wants to allow you to contribute your work,
+    then you'll need to sign a [corporate CLA][].
 
-All commits need to be signed-off in accordance with the Developer Certificate of Origin (DCO) as per below.
+You generally only need to submit a CLA once, so if you've already submitted
+one (even if it was for a different project), you probably don't need to do it
+again.
 
-The [Derek bot](https://github.com/alexellis/derek) will enforce this policy, if you need help please get in touch.
+[individual CLA]: https://developers.google.com/open-source/cla/individual
+[corporate CLA]: https://developers.google.com/open-source/cla/corporate
 
-#### License
 
-This project is licensed under the MIT License.
+## Submitting a patch ##
 
-#### Sign your work
+  1. It's generally best to start by opening a new issue describing the bug or
+     feature you're intending to fix.  Even if you think it's relatively minor,
+     it's helpful to know what people are working on.  Mention in the initial
+     issue that you are planning to work on that bug or feature so that it can
+     be assigned to you.
 
-The sign-off is a simple line at the end of the explanation for a patch. Your
-signature certifies that you wrote the patch or otherwise have the right to pass
-it on as an open-source patch. The rules are pretty simple: if you can certify
-the below (from [developercertificate.org](http://developercertificate.org/)):
+  1. Follow the normal process of [forking][] the project, and setup a new
+     branch to work in.  It's important that each group of changes be done in
+     separate branches in order to ensure that a pull request only includes the
+     commits related to that bug or feature.
 
-```
-Developer Certificate of Origin
-Version 1.1
+  1. Go makes it very simple to ensure properly formatted code, so always run
+     `go fmt` on your code before committing it.  You should also run
+     [golint][] over your code.  As noted in the [golint readme][], it's not
+     strictly necessary that your code be completely "lint-free", but this will
+     help you find common style issues.
 
-Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
-1 Letterman Drive
-Suite D4700
-San Francisco, CA, 94129
+  1. Any significant changes should almost always be accompanied by tests.  The
+     project already has good test coverage, so look at some of the existing
+     tests if you're unsure how to go about it.  [gocov][] and [gocov-html][]
+     are invaluable tools for seeing which parts of your code aren't being
+     exercised by your tests.
 
-Everyone is permitted to copy and distribute verbatim copies of this
-license document, but changing it is not allowed.
+  1. Do your best to have [well-formed commit messages][] for each change.
+     This provides consistency throughout the project, and ensures that commit
+     messages are able to be formatted properly by various git tools.
 
-Developer's Certificate of Origin 1.1
+  1. Finally, push the commits to your fork and submit a [pull request][].
 
-By making a contribution to this project, I certify that:
-
-(a) The contribution was created in whole or in part by me and I
-    have the right to submit it under the open source license
-    indicated in the file; or
-
-(b) The contribution is based upon previous work that, to the best
-    of my knowledge, is covered under an appropriate open source
-    license and I have the right under that license to submit that
-    work with modifications, whether created in whole or in part
-    by me, under the same open source license (unless I am
-    permitted to submit under a different license), as indicated
-    in the file; or
-
-(c) The contribution was provided directly to me by some other
-    person who certified (a), (b) or (c) and I have not modified
-    it.
-
-(d) I understand and agree that this project and the contribution
-    are public and that a record of the contribution (including all
-    personal information I submit with it, including my sign-off) is
-    maintained indefinitely and may be redistributed consistent with
-    this project or the open source license(s) involved.
-```
-
-Then you just add a line to every git commit message:
-
-    Signed-off-by: Joe Smith <joe.smith@email.com>
-
-Use your real name (sorry, no pseudonyms or anonymous contributions.)
-
-If you set your `user.name` and `user.email` git configs, you can sign your
-commit automatically with `git commit -s`.
-
-* Please sign your commits with `git commit -s` so that commits are traceable.
+[forking]: https://help.github.com/articles/fork-a-repo
+[golint]: https://github.com/golang/lint
+[golint readme]: https://github.com/golang/lint/blob/master/README
+[gocov]: https://github.com/axw/gocov
+[gocov-html]: https://github.com/matm/gocov-html
+[well-formed commit messages]: http://tbaggery.com/2008/04/19/a-note-about-git-commit-messages.html
+[squash]: http://git-scm.com/book/en/Git-Tools-Rewriting-History#Squashing-Commits
+[pull request]: https://help.github.com/articles/creating-a-pull-request

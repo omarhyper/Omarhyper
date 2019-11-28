@@ -1,237 +1,67 @@
-// Copyright 2013 The Gorilla WebSocket Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+//
+// Written by Maxim Khitrov (November 2012)
+//
 
-package websocket
+package flowrate
 
 import (
-	"crypto/rand"
-	"crypto/sha1"
-	"encoding/base64"
-	"io"
-	"net/http"
-	"strings"
-	"unicode/utf8"
+	"math"
+	"strconv"
+	"time"
 )
 
-var keyGUID = []byte("258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+// clockRate is the resolution and precision of clock().
+const clockRate = 20 * time.Millisecond
 
-func computeAcceptKey(challengeKey string) string {
-	h := sha1.New()
-	h.Write([]byte(challengeKey))
-	h.Write(keyGUID)
-	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+// czero is the process start time rounded down to the nearest clockRate
+// increment.
+var czero = time.Duration(time.Now().UnixNano()) / clockRate * clockRate
+
+// clock returns a low resolution timestamp relative to the process start time.
+func clock() time.Duration {
+	return time.Duration(time.Now().UnixNano())/clockRate*clockRate - czero
 }
 
-func generateChallengeKey() (string, error) {
-	p := make([]byte, 16)
-	if _, err := io.ReadFull(rand.Reader, p); err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(p), nil
+// clockToTime converts a clock() timestamp to an absolute time.Time value.
+func clockToTime(c time.Duration) time.Time {
+	return time.Unix(0, int64(czero+c))
 }
 
-// Octet types from RFC 2616.
-var octetTypes [256]byte
-
-const (
-	isTokenOctet = 1 << iota
-	isSpaceOctet
-)
-
-func init() {
-	// From RFC 2616
-	//
-	// OCTET      = <any 8-bit sequence of data>
-	// CHAR       = <any US-ASCII character (octets 0 - 127)>
-	// CTL        = <any US-ASCII control character (octets 0 - 31) and DEL (127)>
-	// CR         = <US-ASCII CR, carriage return (13)>
-	// LF         = <US-ASCII LF, linefeed (10)>
-	// SP         = <US-ASCII SP, space (32)>
-	// HT         = <US-ASCII HT, horizontal-tab (9)>
-	// <">        = <US-ASCII double-quote mark (34)>
-	// CRLF       = CR LF
-	// LWS        = [CRLF] 1*( SP | HT )
-	// TEXT       = <any OCTET except CTLs, but including LWS>
-	// separators = "(" | ")" | "<" | ">" | "@" | "," | ";" | ":" | "\" | <">
-	//              | "/" | "[" | "]" | "?" | "=" | "{" | "}" | SP | HT
-	// token      = 1*<any CHAR except CTLs or separators>
-	// qdtext     = <any TEXT except <">>
-
-	for c := 0; c < 256; c++ {
-		var t byte
-		isCtl := c <= 31 || c == 127
-		isChar := 0 <= c && c <= 127
-		isSeparator := strings.IndexRune(" \t\"(),/:;<=>?@[]\\{}", rune(c)) >= 0
-		if strings.IndexRune(" \t\r\n", rune(c)) >= 0 {
-			t |= isSpaceOctet
-		}
-		if isChar && !isCtl && !isSeparator {
-			t |= isTokenOctet
-		}
-		octetTypes[c] = t
-	}
+// clockRound returns d rounded to the nearest clockRate increment.
+func clockRound(d time.Duration) time.Duration {
+	return (d + clockRate>>1) / clockRate * clockRate
 }
 
-func skipSpace(s string) (rest string) {
-	i := 0
-	for ; i < len(s); i++ {
-		if octetTypes[s[i]]&isSpaceOctet == 0 {
-			break
-		}
+// round returns x rounded to the nearest int64 (non-negative values only).
+func round(x float64) int64 {
+	if _, frac := math.Modf(x); frac >= 0.5 {
+		return int64(math.Ceil(x))
 	}
-	return s[i:]
+	return int64(math.Floor(x))
 }
 
-func nextToken(s string) (token, rest string) {
-	i := 0
-	for ; i < len(s); i++ {
-		if octetTypes[s[i]]&isTokenOctet == 0 {
-			break
-		}
+// Percent represents a percentage in increments of 1/1000th of a percent.
+type Percent uint32
+
+// percentOf calculates what percent of the total is x.
+func percentOf(x, total float64) Percent {
+	if x < 0 || total <= 0 {
+		return 0
+	} else if p := round(x / total * 1e5); p <= math.MaxUint32 {
+		return Percent(p)
 	}
-	return s[:i], s[i:]
+	return Percent(math.MaxUint32)
 }
 
-func nextTokenOrQuoted(s string) (value string, rest string) {
-	if !strings.HasPrefix(s, "\"") {
-		return nextToken(s)
-	}
-	s = s[1:]
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '"':
-			return s[:i], s[i+1:]
-		case '\\':
-			p := make([]byte, len(s)-1)
-			j := copy(p, s[:i])
-			escape := true
-			for i = i + 1; i < len(s); i++ {
-				b := s[i]
-				switch {
-				case escape:
-					escape = false
-					p[j] = b
-					j++
-				case b == '\\':
-					escape = true
-				case b == '"':
-					return string(p[:j]), s[i+1:]
-				default:
-					p[j] = b
-					j++
-				}
-			}
-			return "", ""
-		}
-	}
-	return "", ""
+func (p Percent) Float() float64 {
+	return float64(p) * 1e-3
 }
 
-// equalASCIIFold returns true if s is equal to t with ASCII case folding.
-func equalASCIIFold(s, t string) bool {
-	for s != "" && t != "" {
-		sr, size := utf8.DecodeRuneInString(s)
-		s = s[size:]
-		tr, size := utf8.DecodeRuneInString(t)
-		t = t[size:]
-		if sr == tr {
-			continue
-		}
-		if 'A' <= sr && sr <= 'Z' {
-			sr = sr + 'a' - 'A'
-		}
-		if 'A' <= tr && tr <= 'Z' {
-			tr = tr + 'a' - 'A'
-		}
-		if sr != tr {
-			return false
-		}
-	}
-	return s == t
-}
-
-// tokenListContainsValue returns true if the 1#token header with the given
-// name contains a token equal to value with ASCII case folding.
-func tokenListContainsValue(header http.Header, name string, value string) bool {
-headers:
-	for _, s := range header[name] {
-		for {
-			var t string
-			t, s = nextToken(skipSpace(s))
-			if t == "" {
-				continue headers
-			}
-			s = skipSpace(s)
-			if s != "" && s[0] != ',' {
-				continue headers
-			}
-			if equalASCIIFold(t, value) {
-				return true
-			}
-			if s == "" {
-				continue headers
-			}
-			s = s[1:]
-		}
-	}
-	return false
-}
-
-// parseExtensions parses WebSocket extensions from a header.
-func parseExtensions(header http.Header) []map[string]string {
-	// From RFC 6455:
-	//
-	//  Sec-WebSocket-Extensions = extension-list
-	//  extension-list = 1#extension
-	//  extension = extension-token *( ";" extension-param )
-	//  extension-token = registered-token
-	//  registered-token = token
-	//  extension-param = token [ "=" (token | quoted-string) ]
-	//     ;When using the quoted-string syntax variant, the value
-	//     ;after quoted-string unescaping MUST conform to the
-	//     ;'token' ABNF.
-
-	var result []map[string]string
-headers:
-	for _, s := range header["Sec-Websocket-Extensions"] {
-		for {
-			var t string
-			t, s = nextToken(skipSpace(s))
-			if t == "" {
-				continue headers
-			}
-			ext := map[string]string{"": t}
-			for {
-				s = skipSpace(s)
-				if !strings.HasPrefix(s, ";") {
-					break
-				}
-				var k string
-				k, s = nextToken(skipSpace(s[1:]))
-				if k == "" {
-					continue headers
-				}
-				s = skipSpace(s)
-				var v string
-				if strings.HasPrefix(s, "=") {
-					v, s = nextTokenOrQuoted(skipSpace(s[1:]))
-					s = skipSpace(s)
-				}
-				if s != "" && s[0] != ',' && s[0] != ';' {
-					continue headers
-				}
-				ext[k] = v
-			}
-			if s != "" && s[0] != ',' {
-				continue headers
-			}
-			result = append(result, ext)
-			if s == "" {
-				continue headers
-			}
-			s = s[1:]
-		}
-	}
-	return result
+func (p Percent) String() string {
+	var buf [12]byte
+	b := strconv.AppendUint(buf[:0], uint64(p)/1000, 10)
+	n := len(b)
+	b = strconv.AppendUint(b, 1000+uint64(p)%1000, 10)
+	b[n] = '.'
+	return string(append(b, '%'))
 }
