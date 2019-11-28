@@ -1,282 +1,133 @@
-// Package errors provides simple error handling primitives.
-//
-// The traditional error handling idiom in Go is roughly akin to
-//
-//     if err != nil {
-//             return err
-//     }
-//
-// which when applied recursively up the call stack results in error reports
-// without context or debugging information. The errors package allows
-// programmers to add context to the failure path in their code in a way
-// that does not destroy the original value of the error.
-//
-// Adding context to an error
-//
-// The errors.Wrap function returns a new error that adds context to the
-// original error by recording a stack trace at the point Wrap is called,
-// together with the supplied message. For example
-//
-//     _, err := ioutil.ReadAll(r)
-//     if err != nil {
-//             return errors.Wrap(err, "read failed")
-//     }
-//
-// If additional control is required, the errors.WithStack and
-// errors.WithMessage functions destructure errors.Wrap into its component
-// operations: annotating an error with a stack trace and with a message,
-// respectively.
-//
-// Retrieving the cause of an error
-//
-// Using errors.Wrap constructs a stack of errors, adding context to the
-// preceding error. Depending on the nature of the error it may be necessary
-// to reverse the operation of errors.Wrap to retrieve the original error
-// for inspection. Any error value which implements this interface
-//
-//     type causer interface {
-//             Cause() error
-//     }
-//
-// can be inspected by errors.Cause. errors.Cause will recursively retrieve
-// the topmost error that does not implement causer, which is assumed to be
-// the original cause. For example:
-//
-//     switch err := errors.Cause(err).(type) {
-//     case *MyError:
-//             // handle specifically
-//     default:
-//             // unknown error
-//     }
-//
-// Although the causer interface is not exported by this package, it is
-// considered a part of its stable public interface.
-//
-// Formatted printing of errors
-//
-// All error values returned from this package implement fmt.Formatter and can
-// be formatted by the fmt package. The following verbs are supported:
-//
-//     %s    print the error. If the error has a Cause it will be
-//           printed recursively.
-//     %v    see %s
-//     %+v   extended format. Each Frame of the error's StackTrace will
-//           be printed in detail.
-//
-// Retrieving the stack trace of an error or wrapper
-//
-// New, Errorf, Wrap, and Wrapf record a stack trace at the point they are
-// invoked. This information can be retrieved with the following interface:
-//
-//     type stackTracer interface {
-//             StackTrace() errors.StackTrace
-//     }
-//
-// The returned errors.StackTrace type is defined as
-//
-//     type StackTrace []Frame
-//
-// The Frame type represents a call site in the stack trace. Frame supports
-// the fmt.Formatter interface that can be used for printing information about
-// the stack trace of this error. For example:
-//
-//     if err, ok := err.(stackTracer); ok {
-//             for _, f := range err.StackTrace() {
-//                     fmt.Printf("%+s:%d", f)
-//             }
-//     }
-//
-// Although the stackTracer interface is not exported by this package, it is
-// considered a part of its stable public interface.
-//
-// See the documentation for Frame.Format for more details.
-package errors
+// Copyright 2014 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+package http2
 
 import (
+	"errors"
 	"fmt"
-	"io"
 )
 
-// New returns an error with the supplied message.
-// New also records the stack trace at the point it was called.
-func New(message string) error {
-	return &fundamental{
-		msg:   message,
-		stack: callers(),
-	}
+// An ErrCode is an unsigned 32-bit error code as defined in the HTTP/2 spec.
+type ErrCode uint32
+
+const (
+	ErrCodeNo                 ErrCode = 0x0
+	ErrCodeProtocol           ErrCode = 0x1
+	ErrCodeInternal           ErrCode = 0x2
+	ErrCodeFlowControl        ErrCode = 0x3
+	ErrCodeSettingsTimeout    ErrCode = 0x4
+	ErrCodeStreamClosed       ErrCode = 0x5
+	ErrCodeFrameSize          ErrCode = 0x6
+	ErrCodeRefusedStream      ErrCode = 0x7
+	ErrCodeCancel             ErrCode = 0x8
+	ErrCodeCompression        ErrCode = 0x9
+	ErrCodeConnect            ErrCode = 0xa
+	ErrCodeEnhanceYourCalm    ErrCode = 0xb
+	ErrCodeInadequateSecurity ErrCode = 0xc
+	ErrCodeHTTP11Required     ErrCode = 0xd
+)
+
+var errCodeName = map[ErrCode]string{
+	ErrCodeNo:                 "NO_ERROR",
+	ErrCodeProtocol:           "PROTOCOL_ERROR",
+	ErrCodeInternal:           "INTERNAL_ERROR",
+	ErrCodeFlowControl:        "FLOW_CONTROL_ERROR",
+	ErrCodeSettingsTimeout:    "SETTINGS_TIMEOUT",
+	ErrCodeStreamClosed:       "STREAM_CLOSED",
+	ErrCodeFrameSize:          "FRAME_SIZE_ERROR",
+	ErrCodeRefusedStream:      "REFUSED_STREAM",
+	ErrCodeCancel:             "CANCEL",
+	ErrCodeCompression:        "COMPRESSION_ERROR",
+	ErrCodeConnect:            "CONNECT_ERROR",
+	ErrCodeEnhanceYourCalm:    "ENHANCE_YOUR_CALM",
+	ErrCodeInadequateSecurity: "INADEQUATE_SECURITY",
+	ErrCodeHTTP11Required:     "HTTP_1_1_REQUIRED",
 }
 
-// Errorf formats according to a format specifier and returns the string
-// as a value that satisfies error.
-// Errorf also records the stack trace at the point it was called.
-func Errorf(format string, args ...interface{}) error {
-	return &fundamental{
-		msg:   fmt.Sprintf(format, args...),
-		stack: callers(),
+func (e ErrCode) String() string {
+	if s, ok := errCodeName[e]; ok {
+		return s
 	}
+	return fmt.Sprintf("unknown error code 0x%x", uint32(e))
 }
 
-// fundamental is an error that has a message and a stack, but no caller.
-type fundamental struct {
-	msg string
-	*stack
+// ConnectionError is an error that results in the termination of the
+// entire connection.
+type ConnectionError ErrCode
+
+func (e ConnectionError) Error() string { return fmt.Sprintf("connection error: %s", ErrCode(e)) }
+
+// StreamError is an error that only affects one stream within an
+// HTTP/2 connection.
+type StreamError struct {
+	StreamID uint32
+	Code     ErrCode
+	Cause    error // optional additional detail
 }
 
-func (f *fundamental) Error() string { return f.msg }
-
-func (f *fundamental) Format(s fmt.State, verb rune) {
-	switch verb {
-	case 'v':
-		if s.Flag('+') {
-			io.WriteString(s, f.msg)
-			f.stack.Format(s, verb)
-			return
-		}
-		fallthrough
-	case 's':
-		io.WriteString(s, f.msg)
-	case 'q':
-		fmt.Fprintf(s, "%q", f.msg)
-	}
+func streamError(id uint32, code ErrCode) StreamError {
+	return StreamError{StreamID: id, Code: code}
 }
 
-// WithStack annotates err with a stack trace at the point WithStack was called.
-// If err is nil, WithStack returns nil.
-func WithStack(err error) error {
-	if err == nil {
-		return nil
+func (e StreamError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("stream error: stream ID %d; %v; %v", e.StreamID, e.Code, e.Cause)
 	}
-	return &withStack{
-		err,
-		callers(),
-	}
+	return fmt.Sprintf("stream error: stream ID %d; %v", e.StreamID, e.Code)
 }
 
-type withStack struct {
-	error
-	*stack
-}
+// 6.9.1 The Flow Control Window
+// "If a sender receives a WINDOW_UPDATE that causes a flow control
+// window to exceed this maximum it MUST terminate either the stream
+// or the connection, as appropriate. For streams, [...]; for the
+// connection, a GOAWAY frame with a FLOW_CONTROL_ERROR code."
+type goAwayFlowError struct{}
 
-func (w *withStack) Cause() error { return w.error }
+func (goAwayFlowError) Error() string { return "connection exceeded flow control window size" }
 
-func (w *withStack) Format(s fmt.State, verb rune) {
-	switch verb {
-	case 'v':
-		if s.Flag('+') {
-			fmt.Fprintf(s, "%+v", w.Cause())
-			w.stack.Format(s, verb)
-			return
-		}
-		fallthrough
-	case 's':
-		io.WriteString(s, w.Error())
-	case 'q':
-		fmt.Fprintf(s, "%q", w.Error())
-	}
-}
-
-// Wrap returns an error annotating err with a stack trace
-// at the point Wrap is called, and the supplied message.
-// If err is nil, Wrap returns nil.
-func Wrap(err error, message string) error {
-	if err == nil {
-		return nil
-	}
-	err = &withMessage{
-		cause: err,
-		msg:   message,
-	}
-	return &withStack{
-		err,
-		callers(),
-	}
-}
-
-// Wrapf returns an error annotating err with a stack trace
-// at the point Wrapf is called, and the format specifier.
-// If err is nil, Wrapf returns nil.
-func Wrapf(err error, format string, args ...interface{}) error {
-	if err == nil {
-		return nil
-	}
-	err = &withMessage{
-		cause: err,
-		msg:   fmt.Sprintf(format, args...),
-	}
-	return &withStack{
-		err,
-		callers(),
-	}
-}
-
-// WithMessage annotates err with a new message.
-// If err is nil, WithMessage returns nil.
-func WithMessage(err error, message string) error {
-	if err == nil {
-		return nil
-	}
-	return &withMessage{
-		cause: err,
-		msg:   message,
-	}
-}
-
-// WithMessagef annotates err with the format specifier.
-// If err is nil, WithMessagef returns nil.
-func WithMessagef(err error, format string, args ...interface{}) error {
-	if err == nil {
-		return nil
-	}
-	return &withMessage{
-		cause: err,
-		msg:   fmt.Sprintf(format, args...),
-	}
-}
-
-type withMessage struct {
-	cause error
-	msg   string
-}
-
-func (w *withMessage) Error() string { return w.msg + ": " + w.cause.Error() }
-func (w *withMessage) Cause() error  { return w.cause }
-
-func (w *withMessage) Format(s fmt.State, verb rune) {
-	switch verb {
-	case 'v':
-		if s.Flag('+') {
-			fmt.Fprintf(s, "%+v\n", w.Cause())
-			io.WriteString(s, w.msg)
-			return
-		}
-		fallthrough
-	case 's', 'q':
-		io.WriteString(s, w.Error())
-	}
-}
-
-// Cause returns the underlying cause of the error, if possible.
-// An error value has a cause if it implements the following
-// interface:
+// connError represents an HTTP/2 ConnectionError error code, along
+// with a string (for debugging) explaining why.
 //
-//     type causer interface {
-//            Cause() error
-//     }
-//
-// If the error does not implement Cause, the original error will
-// be returned. If the error is nil, nil will be returned without further
-// investigation.
-func Cause(err error) error {
-	type causer interface {
-		Cause() error
-	}
-
-	for err != nil {
-		cause, ok := err.(causer)
-		if !ok {
-			break
-		}
-		err = cause.Cause()
-	}
-	return err
+// Errors of this type are only returned by the frame parser functions
+// and converted into ConnectionError(Code), after stashing away
+// the Reason into the Framer's errDetail field, accessible via
+// the (*Framer).ErrorDetail method.
+type connError struct {
+	Code   ErrCode // the ConnectionError error code
+	Reason string  // additional reason
 }
+
+func (e connError) Error() string {
+	return fmt.Sprintf("http2: connection error: %v: %v", e.Code, e.Reason)
+}
+
+type pseudoHeaderError string
+
+func (e pseudoHeaderError) Error() string {
+	return fmt.Sprintf("invalid pseudo-header %q", string(e))
+}
+
+type duplicatePseudoHeaderError string
+
+func (e duplicatePseudoHeaderError) Error() string {
+	return fmt.Sprintf("duplicate pseudo-header %q", string(e))
+}
+
+type headerFieldNameError string
+
+func (e headerFieldNameError) Error() string {
+	return fmt.Sprintf("invalid header field name %q", string(e))
+}
+
+type headerFieldValueError string
+
+func (e headerFieldValueError) Error() string {
+	return fmt.Sprintf("invalid header field value %q", string(e))
+}
+
+var (
+	errMixPseudoHeaderTypes = errors.New("mix of request and response pseudo headers")
+	errPseudoAfterRegular   = errors.New("pseudo header field after regular")
+)

@@ -1,34 +1,51 @@
-FROM golang:1.11-alpine as build
+#
+# This Dockerfile builds a recent curl with HTTP/2 client support, using
+# a recent nghttp2 build.
+#
+# See the Makefile for how to tag it. If Docker and that image is found, the
+# Go tests use this curl binary for integration tests.
+#
 
-WORKDIR /go/src/github.com/inlets/inlets
+FROM ubuntu:trusty
 
-COPY .git               .git
-COPY vendor             vendor
-COPY pkg                pkg
-COPY cmd                cmd
-COPY main.go            .
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y git-core build-essential wget
 
-ARG GIT_COMMIT
-ARG VERSION
-ARG OPTS
+RUN apt-get install -y --no-install-recommends \
+       autotools-dev libtool pkg-config zlib1g-dev \
+       libcunit1-dev libssl-dev libxml2-dev libevent-dev \
+       automake autoconf
 
-RUN test -z "$(gofmt -l $(find . -type f -name '*.go' -not -path "./vendor/*" -not -path "./function/vendor/*"))" || { echo "Run \"gofmt -s -w\" on your Golang code"; exit 1; } \
-    && CGO_ENABLED=0 go test $(go list ./... | grep -v /vendor/) -cover
+# The list of packages nghttp2 recommends for h2load:
+RUN apt-get install -y --no-install-recommends make binutils \
+        autoconf automake autotools-dev \
+        libtool pkg-config zlib1g-dev libcunit1-dev libssl-dev libxml2-dev \
+        libev-dev libevent-dev libjansson-dev libjemalloc-dev \
+        cython python3.4-dev python-setuptools
 
-# add user in this stage because it cannot be done in next stage which is built from scratch
-# in next stage we'll copy user and group information from this stage
-RUN env ${OPTS} CGO_ENABLED=0 go build -ldflags "-s -w -X main.GitCommit=${GIT_COMMIT} -X main.Version=${VERSION}" -a -installsuffix cgo -o /usr/bin/inlets \
-    && addgroup -S app \
-    && adduser -S -g app app
+# Note: setting NGHTTP2_VER before the git clone, so an old git clone isn't cached:
+ENV NGHTTP2_VER 895da9a
+RUN cd /root && git clone https://github.com/tatsuhiro-t/nghttp2.git
 
-FROM scratch
+WORKDIR /root/nghttp2
+RUN git reset --hard $NGHTTP2_VER
+RUN autoreconf -i
+RUN automake
+RUN autoconf
+RUN ./configure
+RUN make
+RUN make install
 
-COPY --from=build /etc/passwd /etc/group /etc/
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=build /usr/bin/inlets /usr/bin/
+WORKDIR /root
+RUN wget http://curl.haxx.se/download/curl-7.45.0.tar.gz
+RUN tar -zxvf curl-7.45.0.tar.gz
+WORKDIR /root/curl-7.45.0
+RUN ./configure --with-ssl --with-nghttp2=/usr/local
+RUN make
+RUN make install
+RUN ldconfig
 
-USER app
-EXPOSE 80
+CMD ["-h"]
+ENTRYPOINT ["/usr/local/bin/curl"]
 
-ENTRYPOINT ["/usr/bin/inlets"]
-CMD ["--help"]

@@ -1,6 +1,2 @@
-*.iml
-/savers/*generator-*
-/savers/generator-*
-/vendor/
-*.out
-cover*.html
+_obj/
+unix.test
