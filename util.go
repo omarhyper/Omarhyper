@@ -1,67 +1,114 @@
-//
-// Written by Maxim Khitrov (November 2012)
-//
+// Copyright 2011 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 
-package flowrate
+// +build aix darwin dragonfly freebsd linux,!appengine netbsd openbsd
+
+// Package terminal provides support functions for dealing with terminals, as
+// commonly found on UNIX systems.
+//
+// Putting a terminal into raw mode is the most common requirement:
+//
+// 	oldState, err := terminal.MakeRaw(0)
+// 	if err != nil {
+// 	        panic(err)
+// 	}
+// 	defer terminal.Restore(0, oldState)
+package terminal // import "golang.org/x/crypto/ssh/terminal"
 
 import (
-	"math"
-	"strconv"
-	"time"
+	"golang.org/x/sys/unix"
 )
 
-// clockRate is the resolution and precision of clock().
-const clockRate = 20 * time.Millisecond
-
-// czero is the process start time rounded down to the nearest clockRate
-// increment.
-var czero = time.Duration(time.Now().UnixNano()) / clockRate * clockRate
-
-// clock returns a low resolution timestamp relative to the process start time.
-func clock() time.Duration {
-	return time.Duration(time.Now().UnixNano())/clockRate*clockRate - czero
+// State contains the state of a terminal.
+type State struct {
+	termios unix.Termios
 }
 
-// clockToTime converts a clock() timestamp to an absolute time.Time value.
-func clockToTime(c time.Duration) time.Time {
-	return time.Unix(0, int64(czero+c))
+// IsTerminal returns whether the given file descriptor is a terminal.
+func IsTerminal(fd int) bool {
+	_, err := unix.IoctlGetTermios(fd, ioctlReadTermios)
+	return err == nil
 }
 
-// clockRound returns d rounded to the nearest clockRate increment.
-func clockRound(d time.Duration) time.Duration {
-	return (d + clockRate>>1) / clockRate * clockRate
-}
-
-// round returns x rounded to the nearest int64 (non-negative values only).
-func round(x float64) int64 {
-	if _, frac := math.Modf(x); frac >= 0.5 {
-		return int64(math.Ceil(x))
+// MakeRaw put the terminal connected to the given file descriptor into raw
+// mode and returns the previous state of the terminal so that it can be
+// restored.
+func MakeRaw(fd int) (*State, error) {
+	termios, err := unix.IoctlGetTermios(fd, ioctlReadTermios)
+	if err != nil {
+		return nil, err
 	}
-	return int64(math.Floor(x))
-}
 
-// Percent represents a percentage in increments of 1/1000th of a percent.
-type Percent uint32
+	oldState := State{termios: *termios}
 
-// percentOf calculates what percent of the total is x.
-func percentOf(x, total float64) Percent {
-	if x < 0 || total <= 0 {
-		return 0
-	} else if p := round(x / total * 1e5); p <= math.MaxUint32 {
-		return Percent(p)
+	// This attempts to replicate the behaviour documented for cfmakeraw in
+	// the termios(3) manpage.
+	termios.Iflag &^= unix.IGNBRK | unix.BRKINT | unix.PARMRK | unix.ISTRIP | unix.INLCR | unix.IGNCR | unix.ICRNL | unix.IXON
+	termios.Oflag &^= unix.OPOST
+	termios.Lflag &^= unix.ECHO | unix.ECHONL | unix.ICANON | unix.ISIG | unix.IEXTEN
+	termios.Cflag &^= unix.CSIZE | unix.PARENB
+	termios.Cflag |= unix.CS8
+	termios.Cc[unix.VMIN] = 1
+	termios.Cc[unix.VTIME] = 0
+	if err := unix.IoctlSetTermios(fd, ioctlWriteTermios, termios); err != nil {
+		return nil, err
 	}
-	return Percent(math.MaxUint32)
+
+	return &oldState, nil
 }
 
-func (p Percent) Float() float64 {
-	return float64(p) * 1e-3
+// GetState returns the current state of a terminal which may be useful to
+// restore the terminal after a signal.
+func GetState(fd int) (*State, error) {
+	termios, err := unix.IoctlGetTermios(fd, ioctlReadTermios)
+	if err != nil {
+		return nil, err
+	}
+
+	return &State{termios: *termios}, nil
 }
 
-func (p Percent) String() string {
-	var buf [12]byte
-	b := strconv.AppendUint(buf[:0], uint64(p)/1000, 10)
-	n := len(b)
-	b = strconv.AppendUint(b, 1000+uint64(p)%1000, 10)
-	b[n] = '.'
-	return string(append(b, '%'))
+// Restore restores the terminal connected to the given file descriptor to a
+// previous state.
+func Restore(fd int, state *State) error {
+	return unix.IoctlSetTermios(fd, ioctlWriteTermios, &state.termios)
+}
+
+// GetSize returns the dimensions of the given terminal.
+func GetSize(fd int) (width, height int, err error) {
+	ws, err := unix.IoctlGetWinsize(fd, unix.TIOCGWINSZ)
+	if err != nil {
+		return -1, -1, err
+	}
+	return int(ws.Col), int(ws.Row), nil
+}
+
+// passwordReader is an io.Reader that reads from a specific file descriptor.
+type passwordReader int
+
+func (r passwordReader) Read(buf []byte) (int, error) {
+	return unix.Read(int(r), buf)
+}
+
+// ReadPassword reads a line of input from a terminal without local echo.  This
+// is commonly used for inputting passwords and other sensitive data. The slice
+// returned does not include the \n.
+func ReadPassword(fd int) ([]byte, error) {
+	termios, err := unix.IoctlGetTermios(fd, ioctlReadTermios)
+	if err != nil {
+		return nil, err
+	}
+
+	newState := *termios
+	newState.Lflag &^= unix.ECHO
+	newState.Lflag |= unix.ICANON | unix.ISIG
+	newState.Iflag |= unix.ICRNL
+	if err := unix.IoctlSetTermios(fd, ioctlWriteTermios, &newState); err != nil {
+		return nil, err
+	}
+
+	defer unix.IoctlSetTermios(fd, ioctlWriteTermios, termios)
+
+	return readPasswordLine(passwordReader(fd))
 }

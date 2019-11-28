@@ -1,113 +1,120 @@
-// Go support for Protocol Buffers - Google's data interchange format
-//
-// Copyright 2016 The Go Authors.  All rights reserved.
-// https://github.com/golang/protobuf
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-package proto
-
-// This file implements operations on google.protobuf.Timestamp.
+package uuid
 
 import (
-	"errors"
-	"fmt"
 	"time"
 )
 
 const (
-	// Seconds field of the earliest valid Timestamp.
-	// This is time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC).Unix().
-	minValidSeconds = -62135596800
-	// Seconds field just after the latest valid Timestamp.
-	// This is time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC).Unix().
-	maxValidSeconds = 253402300800
+	gregorianToUNIXOffset = 122192928e9
+
+	// set the following to the number of 100ns ticks of the actual
+	// resolution of your system's clock
+	defaultSpinResolution = 1024
 )
 
-// validateTimestamp determines whether a Timestamp is valid.
-// A valid timestamp represents a time in the range
-// [0001-01-01, 10000-01-01) and has a Nanos field
-// in the range [0, 1e9).
+// Timestamp as per 4.1.4.  Timestamp https://www.ietf.org/rfc/rfc4122.txt
 //
-// If the Timestamp is valid, validateTimestamp returns nil.
-// Otherwise, it returns an error that describes
-// the problem.
+// The timestamp is a 60-bit value.  For UUID version 1, this is
 //
-// Every valid Timestamp can be represented by a time.Time, but the converse is not true.
-func validateTimestamp(ts *timestamp) error {
-	if ts == nil {
-		return errors.New("timestamp: nil Timestamp")
-	}
-	if ts.Seconds < minValidSeconds {
-		return fmt.Errorf("timestamp: %#v before 0001-01-01", ts)
-	}
-	if ts.Seconds >= maxValidSeconds {
-		return fmt.Errorf("timestamp: %#v after 10000-01-01", ts)
-	}
-	if ts.Nanos < 0 || ts.Nanos >= 1e9 {
-		return fmt.Errorf("timestamp: %#v: nanos not in range [0, 1e9)", ts)
-	}
-	return nil
+// represented by Coordinated Universal Time (UTC) as a count of 100-
+// nanosecond intervals since 00:00:00.00, 15 October 1582 (the date of
+// Gregorian reform to the Christian calendar).
+//
+// For systems that do not have UTC available, but do have the local
+// time, they may use that instead of UTC, as long as they do so
+// consistently throughout the system.  However, this is not recommended
+// since generating the UTC from local time only needs a time zone
+// offset.
+//
+// For UUID version 3 or 5, the timestamp is a 60-bit value constructed
+// from a name as described in Section 4.3.
+//
+// For UUID version 4, the timestamp is a randomly or pseudo-randomly
+// generated 60-bit value, as described in Section 4.4.
+type Timestamp uint64
+
+// Now converts Unix formatted time to RFC4122 UUID formatted times
+// UUID UTC base time is October 15, 1582.
+// Unix base time is January 1, 1970.
+// Converts time to 100 nanosecond ticks since epoch. Uses time.Now
+func Now() Timestamp {
+	return Timestamp(time.Now().UnixNano()/100 + gregorianToUNIXOffset)
 }
 
-// TimestampFromProto converts a google.protobuf.Timestamp proto to a time.Time.
-// It returns an error if the argument is invalid.
-//
-// Unlike most Go functions, if Timestamp returns an error, the first return value
-// is not the zero time.Time. Instead, it is the value obtained from the
-// time.Unix function when passed the contents of the Timestamp, in the UTC
-// locale. This may or may not be a meaningful time; many invalid Timestamps
-// do map to valid time.Times.
-//
-// A nil Timestamp returns an error. The first return value in that case is
-// undefined.
-func timestampFromProto(ts *timestamp) (time.Time, error) {
-	// Don't return the zero value on error, because corresponds to a valid
-	// timestamp. Instead return whatever time.Unix gives us.
-	var t time.Time
-	if ts == nil {
-		t = time.Unix(0, 0).UTC() // treat nil like the empty Timestamp
-	} else {
-		t = time.Unix(ts.Seconds, int64(ts.Nanos)).UTC()
-	}
-	return t, validateTimestamp(ts)
+// Time converts UUID Timestamp to UTC time.Time
+// Note some higher clock resolutions will lose accuracy if above 100 ns ticks
+func (o Timestamp) Time() time.Time {
+	return time.Unix(0, int64((o-gregorianToUNIXOffset)*100)).UTC()
 }
 
-// TimestampProto converts the time.Time to a google.protobuf.Timestamp proto.
-// It returns an error if the resulting Timestamp is invalid.
-func timestampProto(t time.Time) (*timestamp, error) {
-	seconds := t.Unix()
-	nanos := int32(t.Sub(time.Unix(seconds, 0)))
-	ts := &timestamp{
-		Seconds: seconds,
-		Nanos:   nanos,
+// Add returns the timestamp as modified by the duration
+func (o Timestamp) Add(duration time.Duration) Timestamp {
+	return o + Timestamp(duration/100)
+}
+
+// Sub returns the timestamp as modified by the duration
+func (o Timestamp) Sub(duration time.Duration) Timestamp {
+	return o - Timestamp(duration/100)
+}
+
+// String Converts UUID Timestamp to time.Time and then calls the Stringer
+func (o Timestamp) String() string {
+	return o.Time().String()
+}
+
+// 4.2.1.2.  System Clock Resolution https://www.ietf.org/rfc/rfc4122.txt
+//
+// The timestamp is generated from the system time, whose resolution may
+// be less than the resolution of the UUID timestamp.
+//
+// If UUIDs do not need to be frequently generated, the timestamp can
+// simply be the system time multiplied by the number of 100-nanosecond
+// intervals per system time interval.
+//
+// If a system overruns the generator by requesting too many UUIDs
+// within a single system time interval, the UUID service MUST either
+// return an error, or stall the UUID generator until the system clock
+// catches up.
+//
+// A high resolution timestamp can be simulated by keeping a count of
+// the number of UUIDs that have been generated with the same value of
+// the system time, and using it to construct the low order bits of the
+// timestamp.  The count will range between zero and the number of
+// 100-nanosecond intervals per system time interval.
+//
+// Note: If the processors overrun the UUID generation frequently,
+// additional node identifiers can be allocated to the system, which
+// will permit higher speed allocation by making multiple UUIDs
+// potentially available for each time stamp value.
+
+type spinner struct {
+	// the amount of ids based on the Timestamp
+	Count, Resolution uint
+
+	// the tracked spin stamp
+	Timestamp
+
+	now func() Timestamp
+}
+
+func (o *spinner) next() Timestamp {
+	for {
+		now := o.now()
+		// if clock reading changed since last UUID generated
+		if o.Timestamp == now {
+			o.Count++
+			if o.Count == o.Resolution {
+				for o.now() < o.Timestamp+Timestamp(o.Resolution) {
+				}
+				continue
+			}
+			break
+		}
+
+		// reset count of UUIDs with this timestamp
+		o.Count = 0
+		o.Timestamp = now
+		break
 	}
-	if err := validateTimestamp(ts); err != nil {
-		return nil, err
-	}
-	return ts, nil
+	return o.Timestamp + Timestamp(o.Count)
 }
